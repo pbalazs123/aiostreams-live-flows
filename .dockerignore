@@ -1,0 +1,5 @@
+*
+!app
+!scripts/build_geo.py
+app/geo
+**/__pycache__

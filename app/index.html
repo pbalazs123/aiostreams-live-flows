@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIOStreams Live Flows</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0b0f15;
+  --panel: #121820;
+  --raise: #182029;
+  --line: #222b37;
+  --text: #e8edf3;
+  --muted: #9aa6b6;
+  --faint: #7a8698;
+  --down: #3987e5;
+  --up: #d95926;
+  --good: #27b327; --warn: #fab219; --crit: #e0524f;
+  --sans: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--sans); font-variant-numeric: tabular-nums; }
+.page { max-width: 1500px; margin: 0 auto; padding: 18px 20px 40px; display: grid; gap: 14px; }
+
+.hdr { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+h1 { margin: 0; font: 700 23px var(--sans); letter-spacing: .01em; }
+.tag { font: 600 12px var(--sans); letter-spacing: .1em; border: 1px solid var(--warn); color: var(--warn); border-radius: 4px; padding: 2px 8px; }
+.tag.good { border-color: var(--good); color: var(--good); }
+.tag.crit { border-color: var(--crit); color: var(--crit); }
+.hdr .right { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.clock { color: var(--muted); font-size: 14px; margin-right: 6px; }
+.clock b { font: 500 15px var(--mono); color: var(--text); }
+.btn { font: 500 14px var(--sans); color: var(--text); background: var(--raise); border: 1px solid #33404f; border-radius: 5px; padding: 7px 12px; cursor: pointer; }
+.btn:hover { background: #212b37; }
+.btn[aria-pressed="true"] { border-color: var(--down); }
+.btn:focus-visible { outline: 2px solid var(--down); outline-offset: 2px; }
+
+.strip { display: grid; grid-template-columns: minmax(250px, 1.5fr) repeat(4, minmax(120px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.cell { background: var(--panel); padding: 12px 16px; min-width: 0; }
+.cell small { display: block; color: var(--muted); font-size: 13px; }
+.cell b { font: 500 25px/1.25 var(--mono); }
+.cell b em { font: 400 13px var(--sans); color: var(--muted); margin-left: 4px; }
+.verdict { display: flex; gap: 12px; align-items: center; border-left: 5px solid var(--good); }
+.verdict.warn { border-left-color: var(--warn); }
+.verdict.crit { border-left-color: var(--crit); }
+.verdict .sym { font: 600 25px/1 var(--mono); color: var(--good); }
+.verdict.warn .sym { color: var(--warn); }
+.verdict.crit .sym { color: var(--crit); }
+.verdict strong { display: block; font-size: 17px; line-height: 1.25; }
+.verdict span.sub { color: var(--muted); font-size: 13px; }
+
+.p { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.ph { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 14px; }
+h2 { margin: 0; font: 600 13px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.ph span { color: var(--faint); font-size: 13px; }
+
+.server { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; align-items: center; }
+.server[hidden] { display: none; }
+
+.paths { display: grid; gap: 10px; }
+.flow { display: grid; grid-template-columns: minmax(130px, 1.2fr) minmax(70px, .8fr) minmax(112px, 1fr) minmax(90px, .9fr) minmax(112px, 1fr); align-items: center; }
+.node { background: var(--raise); border: 1px solid #2b3644; border-radius: 6px; padding: 9px 10px; text-align: center; min-width: 0; }
+.node strong { display: block; font-size: 14px; line-height: 1.25; overflow-wrap: anywhere; }
+.node span { display: block; color: var(--muted); font-size: 12px; line-height: 1.3; }
+.link { display: flex; flex-direction: column; align-items: center; padding: 0 5px; min-width: 0; }
+.link b { font: 500 16px var(--mono); white-space: nowrap; }
+.link span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.pipe { width: 100%; height: 6px; margin: 3px 0; }
+.pipe svg { display: block; width: 100%; height: 6px; overflow: visible; }
+.pipe line { stroke: var(--down); stroke-width: 2; stroke-dasharray: 6 5; animation: run 1s linear infinite; }
+.pipe.out line { stroke: var(--up); }
+.pipe.quiet line { animation: none; opacity: .35; }
+@keyframes run { to { stroke-dashoffset: -11; } }
+@media (prefers-reduced-motion: reduce) { .pipe line { animation: none; } }
+
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th { text-align: left; font: 500 13px var(--sans); color: var(--muted); padding: 0 12px 8px 0; white-space: nowrap; }
+td { padding: 10px 12px 10px 0; border-top: 1px solid var(--line); vertical-align: middle; }
+td:last-child, th:last-child { padding-right: 0; }
+td .sub { display: block; color: var(--muted); font-size: 12.5px; }
+td.num, th.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+th.num { font-family: var(--sans); }
+.pos { min-width: 120px; }
+.bar { height: 6px; border-radius: 3px; background: #27313d; overflow: hidden; margin-top: 4px; }
+.bar i { display: block; height: 100%; background: var(--down); border-radius: 3px; }
+.bar.warn i { background: var(--warn); }
+.bar.crit i { background: var(--crit); }
+.pill { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; font-weight: 500; white-space: nowrap; border: 1px solid var(--good); border-radius: 12px; padding: 1px 9px; }
+.pill i { font-style: normal; font-family: var(--mono); color: var(--good); }
+.pill.warn { border-color: var(--warn); } .pill.warn i { color: var(--warn); }
+.pill.crit { border-color: var(--crit); } .pill.crit i { color: var(--crit); }
+.empty { color: var(--muted); padding: 10px 0 2px; }
+.fname { overflow-wrap: anywhere; max-width: 54ch; }
+.who { display: grid; grid-template-columns: 20px auto; column-gap: 9px; align-items: center; justify-content: start; }
+.who .flag img { display: block; border-radius: 2px; }
+.who .ip { font-family: var(--mono); font-size: 13.5px; white-space: nowrap; }
+
+.lower { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); gap: 14px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+#chart, #daily { position: relative; }
+#chart svg, #daily svg { display: block; width: 100%; touch-action: pan-y; }
+#chart text, #daily text { font: 12px var(--sans); fill: var(--faint); }
+#chart text.end { fill: var(--text); font: 500 12px var(--mono); }
+.tip { position: absolute; top: 8px; pointer-events: none; background: #05080c; border: 1px solid #33404f; border-radius: 5px; padding: 6px 9px; font-size: 13px; white-space: nowrap; display: none; }
+.tip div { display: flex; justify-content: space-between; gap: 14px; }
+.tip b { font: 500 13px var(--mono); }
+.meter div:first-child { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--muted); }
+.meter b { font: 400 13px var(--mono); color: var(--text); }
+.events { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; font-size: 13.5px; max-height: 260px; overflow-y: auto; }
+.events li { display: grid; grid-template-columns: 62px 16px 1fr; gap: 4px; }
+.events time { font: 400 13px var(--mono); color: var(--muted); }
+.events i { font: 500 13px var(--mono); font-style: normal; color: var(--muted); }
+.events .warn i { color: var(--warn); } .events .crit i { color: var(--crit); } .events .good i { color: var(--good); }
+.notes { color: var(--muted); font-size: 14px; display: grid; gap: 6px; }
+.notes p { margin: 0; max-width: 95ch; }
+.notes strong { color: var(--text); font-weight: 500; }
+.credit { font-size: 12.5px; color: var(--faint); }
+.credit a { color: inherit; }
+
+@media (max-width: 1080px) {
+  .lower, .split { grid-template-columns: 1fr; }
+  .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .verdict { grid-column: 1 / -1; }
+  .flow { grid-template-columns: 1fr; gap: 3px; }
+  .link { flex-direction: row; justify-content: center; gap: 8px; padding: 2px 0; }
+  .pipe { display: none; }
+  .server { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .tablewrap table { min-width: 760px; }
+}
+@media (max-width: 640px) {
+  .hdr .right { margin-left: 0; }
+  .meter div:first-child { flex-wrap: wrap; gap: 0 10px; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="hdr">
+    <h1>AIOStreams Live Flows</h1>
+    <span class="tag good" id="fresh">CONNECTING</span>
+    <span class="tag" id="demo" hidden>SIMULATED DATA</span>
+    <div class="right">
+      <span class="clock">Updates every 2 s · <b id="clock">--:--:--</b></span>
+      <button class="btn" id="anon" type="button" aria-pressed="false">Hide viewers and titles</button>
+    </div>
+  </header>
+
+  <section class="strip" aria-label="Summary">
+    <div class="cell verdict" id="verdict"><span class="sym" id="vsym">…</span><div><strong id="vtext">Waiting for the first reading</strong><span class="sub" id="vsub"></span></div></div>
+    <div class="cell"><small>Viewers now</small><b id="sViewers">–</b></div>
+    <div class="cell"><small>Outgoing bandwidth</small><b><span id="sOut">–</span><em>Mbit/s</em></b></div>
+    <div class="cell"><small>Waiting</small><b id="sWaiting">–</b></div>
+    <div class="cell"><small>Total traffic (last 30 days)</small><b><span id="sMonth">–</span><em>GB</em></b></div>
+  </section>
+
+  <section class="server" id="server" aria-label="Server usage" hidden></section>
+
+  <section class="p" aria-label="Path of a stream">
+    <div class="ph"><h2>Path of a stream</h2></div>
+    <div class="paths" id="paths"></div>
+    <div class="empty" id="nopaths" hidden>No streams since this page was opened.</div>
+  </section>
+
+  <section class="p" aria-label="Who is watching">
+    <div class="ph"><h2>Who is watching</h2></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Viewer</th><th>Source</th><th>Playing</th><th>Position in file</th><th class="num">Speed now</th><th class="num">Requests</th><th>State</th></tr></thead>
+      <tbody id="viewers"></tbody>
+    </table></div>
+    <div class="empty" id="noview" hidden></div>
+  </section>
+
+  <div class="lower">
+    <section class="p" aria-label="Recent traffic">
+      <div class="ph"><h2>Outgoing bandwidth, last 15 minutes</h2><span>Mbit/s · hover for values</span></div>
+      <div id="chart"><svg id="svg" role="img" aria-label="Line chart of the outgoing bandwidth over the last 15 minutes."></svg><div class="tip" id="tip"></div></div>
+    </section>
+    <section class="p" aria-label="Daily traffic">
+      <div class="ph"><h2>Traffic per day</h2><span id="dailyTotal">Last 30 days</span></div>
+      <div id="daily"><svg id="dsvg" role="img" aria-label="Bar chart of data served per day over the last 30 days."></svg><div class="tip" id="dtip"></div></div>
+    </section>
+  </div>
+
+  <div class="split">
+    <section class="p" aria-label="Addon health">
+      <div class="ph"><h2>Addon health</h2><span>Last 24 hours</span></div>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Addon</th><th class="num">Requests</th><th class="num">Errors</th><th class="num">Avg response</th><th>State</th></tr></thead>
+        <tbody id="addons"></tbody>
+      </table></div>
+      <div class="empty" id="noaddons" hidden>No addon data yet.</div>
+    </section>
+    <section class="p" aria-label="Recent events">
+      <div class="ph"><h2>Recent events</h2></div>
+      <ul class="events" id="events"></ul>
+    </section>
+  </div>
+
+  <section class="p" aria-label="Recently finished streams">
+    <div class="ph"><h2>Recently finished</h2></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Ended</th><th>Viewer</th><th>Source</th><th>File</th><th class="num">Served</th><th class="num">Length</th><th class="num">Requests</th><th>How it ended</th></tr></thead>
+      <tbody id="history"></tbody>
+    </table></div>
+    <div class="empty" id="nohistory" hidden>No finished streams yet.</div>
+  </section>
+
+  <section class="notes" aria-label="How to read this">
+    <p><strong>Position</strong> is how far delivery has got, which runs ahead of the picture because players read ahead. <strong>Waiting</strong> means the player holds the connection open but isn't taking data: it has paused, or its buffer is full. Only the player knows if it is really buffering.</p>
+    <p class="credit">Unofficial, not affiliated with AIOStreams<span id="ver"></span>. <a href="https://db-ip.com">IP Geolocation by DB-IP</a> (CC BY 4.0). Flags from flag-icons (MIT).</p>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const n0 = v => (v === null || v === undefined) ? "–" : String(Math.round(v));
+const pad = n => String(n).padStart(2, "0");
+const hms = d => pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const gb = b => (b / 2 ** 30).toFixed(1) + " GB";
+const pill = p => `<span class="pill ${esc(p[0])}"><i>${esc(p[1])}</i>${esc(p[2])}</span>`;
+const mbit = bps => (bps || 0) * 8 / 1e6;
+let anon = false, S = null, hover = null, dailyHover = null, failed = 0;
+const seenSources = new Set();
+
+function dur(ms) {
+  const m = Math.max(0, Math.floor(ms / 60000));
+  return m < 60 ? m + " min" : Math.floor(m / 60) + " h " + pad(m % 60) + " min";
+}
+function flag(cc) {
+  return !anon && cc ? `<img src="flags/${esc(cc)}.svg" alt="${esc(cc.toUpperCase())}" title="${esc(cc.toUpperCase())}" width="20" height="15">` : "";
+}
+const ACT = {
+  streaming: ["", "✓", "Streaming"],
+  paused: ["warn", "▲", "Waiting"],
+  idle: ["warn", "▲", "Idle"],
+};
+
+function renderPaths(list, known) {
+  list.forEach(v => seenSources.add(v.source));
+  const names = [...seenSources].sort();
+  $("nopaths").hidden = names.length > 0;
+  $("paths").innerHTML = names.map(name => {
+    const here = list.filter(v => v.source === name), rate = known ? here.reduce((a, v) => a + mbit(v.bps), 0) : null;
+    const quiet = rate === null || Math.round(rate) === 0 ? " quiet" : "";
+    return `<div class="flow"><div class="node"><strong>${esc(name)}</strong></div>` +
+      `<div class="link"><b>${n0(rate)}</b><div class="pipe${quiet}"><svg height="6"><line x1="0" y1="3" x2="100%" y2="3"/></svg></div><span>Mbit/s</span></div>` +
+      `<div class="node"><strong>AIOStreams</strong></div>` +
+      `<div class="link"><b>${n0(rate)}</b><div class="pipe out${quiet}"><svg height="6"><line x1="0" y1="3" x2="100%" y2="3"/></svg></div><span>Mbit/s</span></div>` +
+      `<div class="node"><strong>Viewers</strong><span>${known ? here.length + " playing" : "unknown"}</span></div></div>`;
+  }).join("");
+}
+
+function renderServer(sys) {
+  const box = $("server");
+  box.hidden = !sys;
+  if (!sys) return;
+  const hot = v => v >= 90 ? "crit" : v >= 75 ? "warn" : "";
+  const row = (label, text, pct) => `<div class="meter"><div><span>${label}</span><b>${esc(text)}</b></div><div class="bar ${hot(pct)}"><i style="width:${clamp(pct, 0, 100).toFixed(1)}%"></i></div></div>`;
+  const size = b => (b / 2 ** 30).toFixed(b < 10 * 2 ** 30 ? 1 : 0);
+  box.innerHTML =
+    row("CPU usage", `${sys.cpu_pct ?? "–"}% · load ${sys.load1 ?? "–"} on ${sys.cores ?? "–"} threads`, sys.cpu_pct || 0) +
+    row("Memory usage", sys.mem_total ? `${size(sys.mem_used || 0)} of ${size(sys.mem_total)} GB` : "–", sys.mem_total ? 100 * (sys.mem_used || 0) / sys.mem_total : 0) +
+    row("Disk usage", sys.disk_total ? `${size(sys.disk_used || 0)} of ${size(sys.disk_total)} GB` : "–", sys.disk_total ? 100 * (sys.disk_used || 0) / sys.disk_total : 0);
+}
+
+function render() {
+  const s = S;
+  $("clock").textContent = hms(new Date());
+  const stale = failed >= 3 || !s || !s.ready;
+  $("fresh").textContent = stale ? "NO DATA" : "LIVE";
+  $("fresh").className = "tag " + (stale ? "crit" : "good");
+  if (!s || !s.ready) return;
+
+  $("demo").hidden = !s.demo;
+  $("anon").hidden = !!s.hidden;
+  if (s.hidden) anon = true;
+  $("ver").textContent = s.version && !s.demo ? " · AIOStreams " + s.version : "";
+
+  const feed = s.viewers || {}, list = feed.streams || [], stats = s.stats || {};
+  const waiting = list.filter(v => v.activity !== "streaming").length;
+  let cls = "", sym = "✓", title = "Everything is running", sub = list.length ? "AIOStreams answers and streams are playing" : "Nobody is watching right now";
+  if (failed >= 3) { cls = "crit"; sym = "✕"; title = "This page can't reach its server"; sub = "These numbers are out of date"; }
+  else if (!feed.ok) { cls = "crit"; sym = "✕"; title = "Can't read AIOStreams"; sub = feed.error || "Unknown error"; }
+  $("verdict").className = "cell verdict " + cls;
+  $("vsym").textContent = sym; $("vtext").textContent = title; $("vsub").textContent = sub;
+
+  $("sViewers").textContent = feed.ok ? list.length : "–";
+  $("sOut").textContent = n0(s.to_viewers);
+  $("sWaiting").textContent = feed.ok ? waiting : "–";
+  $("sMonth").textContent = stats.bandwidth ? Math.round((stats.bandwidth.total || 0) / 2 ** 30) : "–";
+  renderPaths(list, !!feed.ok);
+  renderServer(stats.system);
+
+  $("viewers").innerHTML = list.map((v, i) => {
+    const pct = v.size ? clamp(100 * v.pos / v.size, 0, 100) : 0, a = ACT[v.activity] || ["warn", "▲", v.activity || "Unknown"];
+    const who = `<div class="who"><span class="flag">${flag(v.country)}</span><span class="ip">${anon ? "Viewer " + (i + 1) : esc(v.ip || "Unknown")}</span><span></span><span class="sub">${anon ? "" : esc(v.user || "")}</span></div>`;
+    const what = anon ? "Hidden" : `<span class="fname">${esc(v.file || "Unknown file")}</span>`;
+    const since = v.started ? dur(Date.now() - v.started) : "";
+    return `<tr><td>${who}</td><td>${esc(v.source)}</td><td>${what}<span class="sub">${v.size ? gb(v.size) : "size unknown"}${since ? " · " + since : ""}</span></td>` +
+      `<td class="pos">${Math.round(pct)}%<div class="bar"><i style="width:${pct.toFixed(1)}%"></i></div></td>` +
+      `<td class="num">${n0(mbit(v.bps))} Mbit/s</td><td class="num">${esc(v.requests ?? "–")}</td><td>${pill(a)}</td></tr>`;
+  }).join("");
+  const ne = $("noview");
+  ne.hidden = feed.ok && list.length > 0;
+  ne.textContent = feed.ok ? "Nobody is watching right now." : "Viewer feed unavailable: " + (feed.error || "unknown error");
+
+  const addons = stats.addons || [];
+  $("addons").innerHTML = addons.map(a => {
+    const rate = a.error_rate || 0, st = rate >= 20 ? ["crit", "✕", "Failing"] : rate >= 5 ? ["warn", "▲", "Some errors"] : ["", "✓", "Healthy"];
+    return `<tr><td>${esc(a.name || "Unknown")}</td><td class="num">${esc(a.requests ?? "–")}</td><td class="num">${esc(a.errors ?? "–")} (${esc(rate)}%)</td>` +
+      `<td class="num">${a.latency_ms === null || a.latency_ms === undefined ? "–" : (a.latency_ms / 1000).toFixed(1) + " s"}</td><td>${pill(st)}</td></tr>`;
+  }).join("");
+  $("noaddons").hidden = addons.length > 0;
+
+  const ENDS = { idle: ["", "✓", "Player stopped"], stopped: ["warn", "▲", "Stopped by admin"], stale: ["warn", "▲", "Connection lost"], error: ["crit", "✕", "Error"], limit: ["warn", "▲", "Hit a limit"], banned: ["crit", "✕", "Banned"] };
+  const hist = stats.history || [];
+  $("history").innerHTML = hist.map(h => {
+    const e = ENDS[h.reason] || ["warn", "▲", h.reason || "Unknown"];
+    const ended = h.ended ? new Date(h.ended) : null;
+    const who = `<div class="who"><span class="flag">${flag(h.country)}</span><span class="ip">${anon ? "Viewer" : esc(h.ip || "Unknown")}</span></div>`;
+    return `<tr><td class="num" style="text-align:left">${ended ? pad(ended.getDate()) + "." + pad(ended.getMonth() + 1) + " " + hms(ended).slice(0, 5) : "–"}</td><td>${who}</td><td>${esc(h.source)}</td>` +
+      `<td><span class="fname">${anon ? "Hidden" : esc(h.file || "Unknown file")}</span></td><td class="num">${gb(h.served || 0)}</td>` +
+      `<td class="num">${h.started && h.ended ? dur(h.ended - h.started) : "–"}</td><td class="num">${esc(h.requests ?? "–")}</td><td>${pill(e)}</td></tr>`;
+  }).join("");
+  $("nohistory").hidden = hist.length > 0;
+
+  const syms = { good: "✓", warn: "▲", crit: "✕", info: "·" };
+  $("events").innerHTML = (s.events || []).map(e => {
+    const text = anon ? e.text.replace(/\S+ (started|finished) .*/, "A viewer $1 a stream").replace(/^\S+ made a new/, "A viewer made a new") : e.text;
+    return `<li class="${esc(e.level)}"><time>${hms(new Date(e.t)).slice(0, 5)}</time><i>${syms[e.level] || "·"}</i><span>${esc(text)}</span></li>`;
+  }).join("") || `<li class="info"><time></time><i>·</i><span>Nothing since this started.</span></li>`;
+  draw();
+  drawDaily();
+}
+
+function draw() {
+  const box = $("chart"), svg = $("svg");
+  const h = (S && S.history) || [], W = Math.max(280, box.clientWidth), H = W < 600 ? 220 : 260, L = 38, R = 44, T = 18, B = 22;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("height", H);
+  const now = h.length ? h[h.length - 1][0] : Date.now(), span = 15 * 60000;
+  const peak = Math.max(10, ...h.map(p => p[1] || 0));
+  const step = peak > 400 ? 200 : peak > 200 ? 100 : peak > 100 ? 50 : peak > 40 ? 20 : 10;
+  const ymax = Math.ceil(peak / step) * step;
+  const x = t => L + (W - L - R) * clamp(1 - (now - t) / span, 0, 1);
+  const y = v => H - B - (H - B - T) * v / ymax;
+  let d = "", on = false;
+  h.forEach(p => { if (p[1] === null || p[1] === undefined) { on = false; return; } d += (on ? "L" : "M") + x(p[0]).toFixed(1) + " " + y(p[1]).toFixed(1); on = true; });
+  let s = "";
+  for (let g = 0; g <= ymax; g += step) s += `<line x1="${L}" x2="${W - R}" y1="${y(g)}" y2="${y(g)}" stroke="#222b37"/><text x="${L - 6}" y="${y(g) + 4}" text-anchor="end">${g}</text>`;
+  [[15, "15 min ago", "start"], [10, "10 min", "middle"], [5, "5 min", "middle"], [0, "now", "end"]].forEach(([m, t, a]) => { s += `<text x="${x(now - m * 60000)}" y="${H - 5}" text-anchor="${a}">${t}</text>`; });
+  s += `<path d="${d}" fill="none" stroke="#d95926" stroke-width="2" stroke-linejoin="round"/>`;
+  const e = h[h.length - 1];
+  if (e && e[1] !== null && e[1] !== undefined) {
+    s += `<circle cx="${x(e[0])}" cy="${y(e[1])}" r="4" fill="#d95926" stroke="#121820" stroke-width="2"/><text class="end" x="${W - R + 8}" y="${y(e[1]) + 4}">${Math.round(e[1])}</text>`;
+  }
+  const tip = $("tip");
+  if (hover !== null && h.length) {
+    const t = now - span * (1 - hover);
+    let best = h[0];
+    h.forEach(p => { if (Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p; });
+    const px = x(best[0]);
+    s += `<line x1="${px}" x2="${px}" y1="${T}" y2="${H - B}" stroke="#9aa6b6"/>`;
+    tip.innerHTML = `<div style="color:var(--muted)">${hms(new Date(best[0]))}</div><div><span>Outgoing bandwidth</span><b>${n0(best[1])}</b></div>`;
+    tip.style.display = "block";
+    tip.style.left = (px + tip.offsetWidth + 14 > W ? px - tip.offsetWidth - 10 : px + 10) + "px";
+  } else { tip.style.display = "none"; }
+  svg.innerHTML = s;
+}
+
+function drawDaily() {
+  const box = $("daily"), svg = $("dsvg"), bw = S && S.stats && S.stats.bandwidth, tip = $("dtip");
+  const days = (bw && bw.days) || [];
+  const W = Math.max(280, box.clientWidth), H = 260, L = 50, R = 8, T = 10, B = 22;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("height", H);
+  const GBS = b => (b || 0) / 2 ** 30;
+  if (bw) $("dailyTotal").textContent = "Last 30 days · " + Math.round(GBS(bw.total)) + " GB";
+  if (!days.length) { svg.innerHTML = `<text x="${L}" y="${H / 2}">No traffic data yet</text>`; tip.style.display = "none"; return; }
+  const peak = Math.max(1, ...days.map(d => GBS(d[1])));
+  const step = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find(x => peak / x <= 4) || 2000;
+  const ymax = Math.ceil(peak / step) * step, slot = (W - L - R) / days.length, bar = Math.max(2, Math.min(slot - 2, 16));
+  const y = v => H - B - (H - B - T) * v / ymax;
+  let s = "";
+  for (let g = 0; g <= ymax; g += step) s += `<line x1="${L}" x2="${W - R}" y1="${y(g)}" y2="${y(g)}" stroke="#222b37"/><text x="${L - 6}" y="${y(g) + 4}" text-anchor="end">${g} GB</text>`;
+  days.forEach((d, i) => {
+    const v = GBS(d[1]), x = L + slot * i + (slot - bar) / 2;
+    if (v > 0) { const h = Math.max(2, y(0) - y(v)), r = Math.min(4, bar / 2, h); s += `<path d="M${x} ${y(0)}V${y(0) - h + r}Q${x} ${y(0) - h} ${x + r} ${y(0) - h}H${x + bar - r}Q${x + bar} ${y(0) - h} ${x + bar} ${y(0) - h + r}V${y(0)}Z" fill="${dailyHover === i ? "#6aa6ee" : "#3987e5"}"/>`; }
+  });
+  const label = t => { const d = new Date(t); return pad(d.getDate()) + "." + pad(d.getMonth() + 1); };
+  [[0, "start"], [days.length - 1, "end"]].forEach(([i, a]) => { s += `<text x="${a === "start" ? L : W - R}" y="${H - 5}" text-anchor="${a}">${label(days[i][0])}</text>`; });
+  svg.innerHTML = s;
+  if (dailyHover !== null && days[dailyHover]) {
+    const d = days[dailyHover];
+    tip.innerHTML = `<div style="color:var(--muted)">${label(d[0])}</div><div><span>Served</span><b>${GBS(d[1]).toFixed(1)} GB</b></div>`;
+    tip.style.display = "block";
+    const px = L + slot * dailyHover + slot / 2;
+    tip.style.left = (px + tip.offsetWidth + 14 > W ? px - tip.offsetWidth - 10 : px + 10) + "px";
+  } else { tip.style.display = "none"; }
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("api/state", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    S = await r.json();
+    failed = 0;
+  } catch (e) { failed++; }
+  render();
+}
+
+$("svg").addEventListener("pointermove", ev => {
+  const b = $("svg").getBoundingClientRect(), L = 38, R = 44;
+  hover = clamp((ev.clientX - b.left - L) / (b.width - L - R), 0, 1);
+  draw();
+});
+$("svg").addEventListener("pointerleave", () => { hover = null; draw(); });
+$("dsvg").addEventListener("pointermove", ev => {
+  const b = $("dsvg").getBoundingClientRect(), n = (S && S.stats && S.stats.bandwidth && S.stats.bandwidth.days.length) || 0;
+  if (!n) return;
+  dailyHover = clamp(Math.floor((ev.clientX - b.left - 50) / ((b.width - 58) / n)), 0, n - 1);
+  drawDaily();
+});
+$("dsvg").addEventListener("pointerleave", () => { dailyHover = null; drawDaily(); });
+$("anon").addEventListener("click", () => {
+  anon = !anon;
+  $("anon").setAttribute("aria-pressed", String(anon));
+  $("anon").textContent = anon ? "Show viewers and titles" : "Hide viewers and titles";
+  render();
+});
+window.addEventListener("resize", () => { draw(); drawDaily(); });
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+services:
+  live-flows:
+    image: ghcr.io/pbalazs123/aiostreams-live-flows:latest
+    container_name: aiostreams-live-flows
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      AIOSTREAMS_URL: ${AIOSTREAMS_URL:-http://aiostreams:3000}
+      AIOSTREAMS_USER: ${AIOSTREAMS_USER:?set AIOSTREAMS_USER in .env}
+      AIOSTREAMS_PASSWORD: ${AIOSTREAMS_PASSWORD:?set AIOSTREAMS_PASSWORD in .env}
+      FLOWS_PASSWORD: ${FLOWS_PASSWORD:-}
+      FLOWS_HIDE_VIEWERS: ${FLOWS_HIDE_VIEWERS:-}
+      FLOWS_SOURCE_NAMES: ${FLOWS_SOURCE_NAMES:-}
+      TZ: ${TZ:-UTC}
+    ports:
+      # Only this machine can open the page. Read "Keep it private" in the README before changing this.
+      - "127.0.0.1:8300:8300"
+    networks:
+      - aiostreams
+
+networks:
+  aiostreams:
+    external: true
+    name: ${AIOSTREAMS_NETWORK:-aiostreams_default}

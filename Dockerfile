@@ -7,7 +7,8 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 COPY app /app
 COPY scripts/build_geo.py /tmp/build_geo.py
-RUN python /tmp/build_geo.py /app/geo && rm /tmp/build_geo.py && find /app -type d -name __pycache__ -prune -exec rm -rf {} +
+RUN python /tmp/build_geo.py /app/geo && rm /tmp/build_geo.py && find /app -type d -name __pycache__ -prune -exec rm -rf {} + \
+  && mkdir /data && chown 65534:65534 /data && chmod 700 /data
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 USER 65534:65534

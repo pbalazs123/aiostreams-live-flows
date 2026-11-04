@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f15">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Live Flows">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
 <title>AIOStreams Live Flows</title>
 <style>
 :root {
@@ -22,8 +28,9 @@
 }
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--sans); font-variant-numeric: tabular-nums; }
-.page { max-width: 1500px; margin: 0 auto; padding: 18px 20px 40px; display: grid; gap: 14px; }
+.page { max-width: 1500px; margin: 0 auto; padding: max(18px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); display: grid; gap: 14px; }
 
 .hdr { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
 h1 { margin: 0; font: 700 23px var(--sans); letter-spacing: .01em; }
@@ -62,7 +69,10 @@ h2 { margin: 0; font: 600 13px var(--sans); letter-spacing: .12em; text-transfor
 
 .paths { display: grid; gap: 10px; }
 .flow { display: grid; grid-template-columns: minmax(130px, 1.2fr) minmax(70px, .8fr) minmax(112px, 1fr) minmax(90px, .9fr) minmax(112px, 1fr); align-items: center; }
-.node { background: var(--raise); border: 1px solid #2b3644; border-radius: 6px; padding: 9px 10px; text-align: center; min-width: 0; }
+.node { position: relative; background: var(--raise); border: 1px solid #2b3644; border-radius: 6px; padding: 9px 10px; text-align: center; min-width: 0; min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; align-self: stretch; }
+.led { position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--faint); }
+.led.on { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.led.off { background: var(--crit); box-shadow: 0 0 6px var(--crit); }
 .node strong { display: block; font-size: 14px; line-height: 1.25; overflow-wrap: anywhere; }
 .node span { display: block; color: var(--muted); font-size: 12px; line-height: 1.3; }
 .link { display: flex; flex-direction: column; align-items: center; padding: 0 5px; min-width: 0; }
@@ -121,20 +131,76 @@ th.num { font-family: var(--sans); }
 .credit { font-size: 12.5px; color: var(--faint); }
 .credit a { color: inherit; }
 
+/* Tablet: streams and finished rows become cards, because the full tables need about 1000 px. */
 @media (max-width: 1080px) {
-  .lower, .split { grid-template-columns: 1fr; }
-  .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lower, .split { grid-template-columns: minmax(0, 1fr); }
+  .strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .verdict { grid-column: 1 / -1; }
-  .flow { grid-template-columns: 1fr; gap: 3px; }
-  .link { flex-direction: row; justify-content: center; gap: 8px; padding: 2px 0; }
-  .pipe { display: none; }
-  .server { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  .tablewrap table { min-width: 760px; }
 }
+@media (max-width: 1000px) {
+  table.cards { display: block; }
+  table.cards thead { display: none; }
+  table.cards tbody { display: grid; gap: 10px; }
+  table.cards tr { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px 14px; align-items: center; background: var(--raise); border-radius: 6px; padding: 10px 12px; }
+  table.cards td, table.cards td.num { display: block; border: 0; padding: 0; text-align: left !important; min-width: 0; }
+  .fname { max-width: none; }
+  .pos { min-width: 0; }
+  #viewers td:nth-child(1) { grid-area: 1 / 1 / 2 / 3; }
+  #viewers td:nth-child(7) { grid-area: 1 / 3; justify-self: end; }
+  #viewers td:nth-child(3) { grid-area: 2 / 1 / 3 / 4; }
+  #viewers td:nth-child(4) { grid-area: 3 / 1 / 4 / 4; }
+  #viewers td:nth-child(2) { grid-area: 4 / 1; overflow-wrap: anywhere; }
+  #viewers td:nth-child(5) { grid-area: 4 / 2; }
+  #viewers td:nth-child(6) { grid-area: 4 / 3; justify-self: end; }
+  #viewers td:nth-child(6)::after, #history td:nth-child(7)::after { content: " req"; color: var(--muted); font-family: var(--sans); }
+  #history td:nth-child(2) { grid-area: 1 / 1 / 2 / 3; }
+  #history td:nth-child(8) { grid-area: 1 / 3; justify-self: end; }
+  #history td:nth-child(4) { grid-area: 2 / 1 / 3 / 4; }
+  #history td:nth-child(1) { grid-area: 3 / 1; color: var(--muted); }
+  #history td:nth-child(3) { grid-area: 3 / 2 / 4 / 4; justify-self: end; overflow-wrap: anywhere; }
+  #history td:nth-child(5) { grid-area: 4 / 1; }
+  #history td:nth-child(6) { grid-area: 4 / 2; }
+  #history td:nth-child(7) { grid-area: 4 / 3; justify-self: end; }
+}
+/* Phone: the chains stack and run downwards, so the stripes do too. Pseudo-elements, because SVG line ends can't be moved from CSS. */
 @media (max-width: 640px) {
-  .hdr .right { margin-left: 0; }
+  .page { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); gap: 10px; }
+  .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cell { padding: 10px 12px; }
+  .hdr .right { margin-left: 0; width: 100%; justify-content: space-between; }
+  .upd { display: none; }
+  .server { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .meter div:first-child { flex-wrap: wrap; gap: 0 10px; }
+  .p { padding: 12px; }
+  .flow { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .node { min-height: 38px; padding: 5px 8px; align-self: auto; }
+  .link { flex-direction: row; justify-content: center; align-items: center; gap: 8px; padding: 2px 0; min-height: 34px; }
+  .pipe { display: block; position: relative; order: -1; flex: none; width: 4px; height: 30px; margin: 0; }
+  .pipe svg { display: none; }
+  .pipe::before { content: ""; position: absolute; inset: 0; border-radius: 2px; background: repeating-linear-gradient(to bottom, var(--down) 0 6px, transparent 6px 11px); background-size: 100% 11px; animation: runv 1s linear infinite; }
+  .pipe.out::before { background-image: repeating-linear-gradient(to bottom, var(--up) 0 6px, transparent 6px 11px); }
+  .pipe.quiet::before { animation: none; opacity: .35; }
+  .who { grid-template-columns: 20px minmax(0, 1fr); }
+  .who .ip { white-space: normal; overflow-wrap: anywhere; }
+  table.cards-phone { display: block; }
+  table.cards-phone thead { display: none; }
+  table.cards-phone tbody { display: grid; gap: 10px; }
+  table.cards-phone tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 10px; align-items: center; background: var(--raise); border-radius: 6px; padding: 10px 12px; }
+  table.cards-phone td, table.cards-phone td.num { display: block; border: 0; padding: 0; text-align: left; }
+  #addons td:nth-child(1) { grid-area: 1 / 1 / 2 / 3; overflow-wrap: anywhere; }
+  #addons td:nth-child(5) { grid-area: 1 / 3; justify-self: end; }
+  #addons td:nth-child(2) { grid-area: 2 / 1; }
+  #addons td:nth-child(3) { grid-area: 2 / 2; }
+  #addons td:nth-child(4) { grid-area: 2 / 3; justify-self: end; }
+  #addons td:nth-child(2)::after { content: " req"; color: var(--muted); font-family: var(--sans); }
+  #addons td:nth-child(3)::after { content: " err"; color: var(--muted); font-family: var(--sans); }
 }
+@keyframes runv { to { background-position: 0 11px; } }
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) { .pipe::before { animation: none; } }
+@media (max-width: 480px) {
+  .events li { grid-template-columns: 48px 14px minmax(0, 1fr); }
+}
+.events span { overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -144,7 +210,7 @@ th.num { font-family: var(--sans); }
     <span class="tag good" id="fresh">CONNECTING</span>
     <span class="tag" id="demo" hidden>SIMULATED DATA</span>
     <div class="right">
-      <span class="clock">Updates every 2 s · <b id="clock">--:--:--</b></span>
+      <span class="clock"><span class="upd">Updates every 2 s · </span><b id="clock">--:--:--</b></span>
       <button class="btn" id="anon" type="button" aria-pressed="false">Hide viewers and titles</button>
     </div>
   </header>
@@ -167,7 +233,7 @@ th.num { font-family: var(--sans); }
 
   <section class="p" aria-label="Who is watching">
     <div class="ph"><h2>Who is watching</h2></div>
-    <div class="tablewrap"><table>
+    <div class="tablewrap"><table class="cards">
       <thead><tr><th>Viewer</th><th>Source</th><th>Playing</th><th>Position in file</th><th class="num">Speed now</th><th class="num">Requests</th><th>State</th></tr></thead>
       <tbody id="viewers"></tbody>
     </table></div>
@@ -188,7 +254,7 @@ th.num { font-family: var(--sans); }
   <div class="split">
     <section class="p" aria-label="Addon health">
       <div class="ph"><h2>Addon health</h2><span>Last 24 hours</span></div>
-      <div class="tablewrap"><table>
+      <div class="tablewrap"><table class="cards-phone">
         <thead><tr><th>Addon</th><th class="num">Requests</th><th class="num">Errors</th><th class="num">Avg response</th><th>State</th></tr></thead>
         <tbody id="addons"></tbody>
       </table></div>
@@ -202,7 +268,7 @@ th.num { font-family: var(--sans); }
 
   <section class="p" aria-label="Recently finished streams">
     <div class="ph"><h2>Recently finished</h2></div>
-    <div class="tablewrap"><table>
+    <div class="tablewrap"><table class="cards">
       <thead><tr><th>Ended</th><th>Viewer</th><th>Source</th><th>File</th><th class="num">Served</th><th class="num">Length</th><th class="num">Requests</th><th>How it ended</th></tr></thead>
       <tbody id="history"></tbody>
     </table></div>
@@ -244,13 +310,14 @@ const ACT = {
 function renderPaths(list, known) {
   list.forEach(v => seenSources.add(v.source));
   const names = [...seenSources].sort();
+  const light = known ? ["on", "AIOStreams OK: its feed answers"] : ["off", "AIOStreams not working: its feed doesn't answer"];
   $("nopaths").hidden = names.length > 0;
   $("paths").innerHTML = names.map(name => {
     const here = list.filter(v => v.source === name), rate = known ? here.reduce((a, v) => a + mbit(v.bps), 0) : null;
     const quiet = rate === null || Math.round(rate) === 0 ? " quiet" : "";
     return `<div class="flow"><div class="node"><strong>${esc(name)}</strong></div>` +
       `<div class="link"><b>${n0(rate)}</b><div class="pipe${quiet}"><svg height="6"><line x1="0" y1="3" x2="100%" y2="3"/></svg></div><span>Mbit/s</span></div>` +
-      `<div class="node"><strong>AIOStreams</strong></div>` +
+      `<div class="node"><i class="led ${light[0]}" role="img" title="${light[1]}" aria-label="${light[1]}"></i><strong>AIOStreams</strong></div>` +
       `<div class="link"><b>${n0(rate)}</b><div class="pipe out${quiet}"><svg height="6"><line x1="0" y1="3" x2="100%" y2="3"/></svg></div><span>Mbit/s</span></div>` +
       `<div class="node"><strong>Viewers</strong><span>${known ? here.length + " playing" : "unknown"}</span></div></div>`;
   }).join("");
@@ -264,7 +331,7 @@ function renderServer(sys) {
   const row = (label, text, pct) => `<div class="meter"><div><span>${label}</span><b>${esc(text)}</b></div><div class="bar ${hot(pct)}"><i style="width:${clamp(pct, 0, 100).toFixed(1)}%"></i></div></div>`;
   const size = b => (b / 2 ** 30).toFixed(b < 10 * 2 ** 30 ? 1 : 0);
   box.innerHTML =
-    row("CPU usage", `${sys.cpu_pct ?? "–"}% · load ${sys.load1 ?? "–"} on ${sys.cores ?? "–"} threads`, sys.cpu_pct || 0) +
+    row("CPU usage", `${sys.cpu_pct ?? "–"}% · load ${sys.load1 ?? "–"}`, sys.cpu_pct || 0) +
     row("Memory usage", sys.mem_total ? `${size(sys.mem_used || 0)} of ${size(sys.mem_total)} GB` : "–", sys.mem_total ? 100 * (sys.mem_used || 0) / sys.mem_total : 0) +
     row("Disk usage", sys.disk_total ? `${size(sys.disk_used || 0)} of ${size(sys.disk_total)} GB` : "–", sys.disk_total ? 100 * (sys.disk_used || 0) / sys.disk_total : 0);
 }
@@ -353,7 +420,7 @@ function draw() {
   h.forEach(p => { if (p[1] === null || p[1] === undefined) { on = false; return; } d += (on ? "L" : "M") + x(p[0]).toFixed(1) + " " + y(p[1]).toFixed(1); on = true; });
   let s = "";
   for (let g = 0; g <= ymax; g += step) s += `<line x1="${L}" x2="${W - R}" y1="${y(g)}" y2="${y(g)}" stroke="#222b37"/><text x="${L - 6}" y="${y(g) + 4}" text-anchor="end">${g}</text>`;
-  [[15, "15 min ago", "start"], [10, "10 min", "middle"], [5, "5 min", "middle"], [0, "now", "end"]].forEach(([m, t, a]) => { s += `<text x="${x(now - m * 60000)}" y="${H - 5}" text-anchor="${a}">${t}</text>`; });
+  [[15, "15 min ago", "start"], [10, "10 min", "middle"], [5, "5 min", "middle"], [0, "now", "end"]].filter(([m]) => W >= 500 || m !== 10).forEach(([m, t, a]) => { s += `<text x="${x(now - m * 60000)}" y="${H - 5}" text-anchor="${a}">${t}</text>`; });
   s += `<path d="${d}" fill="none" stroke="#d95926" stroke-width="2" stroke-linejoin="round"/>`;
   const e = h[h.length - 1];
   if (e && e[1] !== null && e[1] !== undefined) {

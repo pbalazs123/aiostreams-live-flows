@@ -17,8 +17,14 @@ services:
     ports:
       # Only this machine can open the page. Read "Keep it private" in the README before changing this.
       - "127.0.0.1:8300:8300"
+    volumes:
+      # The last 15 minutes of the chart and the recent events. Holds viewer IPs and filenames unless FLOWS_HIDE_VIEWERS is on.
+      - live-flows-data:/data
     networks:
       - aiostreams
+
+volumes:
+  live-flows-data:
 
 networks:
   aiostreams:

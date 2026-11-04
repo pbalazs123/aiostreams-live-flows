@@ -4,7 +4,7 @@
 AIOStreams has no read-only role, so the login this uses could also stop streams or ban users. The only POST this program
 ever sends is the login itself: everything else goes through aio_get, which refuses any path outside READS.
 
-History and events live in memory and are gone after a restart. Stream URLs never reach the browser, only a source label.
+History and events are saved to FLOWS_DATA every 30 s and on shutdown. Stream URLs never reach the browser or the disk, only a source label.
 """
 import base64
 import collections
@@ -15,6 +15,7 @@ import ipaddress
 import json
 import os
 import re
+import signal
 import socketserver
 import sys
 import threading
@@ -27,6 +28,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TESTED_VERSION = "2.37.0"
 STEP = 2
 POINTS = 450
+SAVE_EVERY = 30
+ICONS = ("/icons/icon-180.png", "/icons/icon-192.png", "/icons/icon-512.png")
 LOGIN_RETRY = 300
 READS = (
     "/dashboard/streams/live",
@@ -55,6 +58,7 @@ PAGE_PASSWORD = os.environ.get("FLOWS_PASSWORD", "")
 SOURCE_NAMES = parse_names(os.environ.get("FLOWS_SOURCE_NAMES", ""))
 BIND = os.environ.get("FLOWS_BIND", "0.0.0.0")
 PORT = int(os.environ.get("FLOWS_PORT", "8300"))
+DATA_FILE = os.path.join(os.environ.get("FLOWS_DATA", "/data"), "state.json")
 
 history = collections.deque(maxlen=POINTS)
 events = collections.deque(maxlen=40)
@@ -65,6 +69,54 @@ _cache = {}
 _geo = {}
 _seen = {"viewers": {}, "feed_ok": None}
 _aio = {"cookie": None, "retry": 0, "error": None}
+_save_failed = {"said": False}
+
+
+def save():
+    """Written beside the real file and swapped in, so a crash can't leave half a file. Holds viewer IPs and filenames, so owner only."""
+    if DEMO:
+        return
+    try:
+        tmp = DATA_FILE + ".tmp"
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+            json.dump({"hidden": HIDE, "history": list(history), "events": list(events), "viewers": _seen["viewers"]}, f)
+        os.replace(tmp, DATA_FILE)
+        _save_failed["said"] = False
+    except (OSError, RuntimeError, ValueError) as e:
+        # RuntimeError: the poller changed a list while the shutdown handler was copying it.
+        if not _save_failed["said"]:
+            print(f"Keeping data in memory only, can't write to {DATA_FILE}: {type(e).__name__}", flush=True)
+        _save_failed["said"] = True
+
+
+def load():
+    try:
+        with open(DATA_FILE) as f:
+            saved = json.load(f)
+        now = int(time.time() * 1000)
+        points = [[int(p[0]), p[1]] for p in saved["history"] if now - p[0] <= POINTS * STEP * 1000]
+        # Saved before FLOWS_HIDE_VIEWERS was turned on: those events and viewers must not come back.
+        keep = saved.get("hidden") or not HIDE
+        saved_events = list(saved["events"]) if keep else []
+        viewers = dict(saved["viewers"]) if keep else {}
+        if not all(isinstance(e, dict) for e in saved_events):
+            raise ValueError("events")
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError) as e:
+        print(f"Starting without saved data: {type(e).__name__}", flush=True)
+        return
+    history.extend(points)
+    if points:
+        # A gap in the line for the time this wasn't running, rather than a straight line across it.
+        history.append([now, None])
+    events.extend(saved_events)
+    _seen["viewers"] = viewers
+
+
+def stop(*_args):
+    save()
+    sys.exit(0)
 
 
 def event(level, text):
@@ -332,12 +384,16 @@ def poll():
 
 
 def poller():
+    saved_at = time.monotonic()
     while True:
         started = time.monotonic()
         try:
             poll()
         except Exception as e:
             event("crit", f"Collector error: {type(e).__name__}")
+        if started - saved_at >= SAVE_EVERY:
+            save()
+            saved_at = started
         time.sleep(max(0.2, STEP - (time.monotonic() - started)))
 
 
@@ -374,6 +430,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/health":
             self.send(200, "text/plain", b"ok")
+        # Browsers fetch these without the page's password, and they hold nothing private.
+        elif path == "/manifest.webmanifest":
+            with open(os.path.join(HERE, "manifest.webmanifest"), "rb") as f:
+                self.send(200, "application/manifest+json", f.read())
+        elif path in ICONS:
+            with open(os.path.join(HERE, path.lstrip("/")), "rb") as f:
+                self.send(200, "image/png", f.read())
         elif not self.allowed():
             self.send(401, "text/plain", b"password required", [("WWW-Authenticate", 'Basic realm="AIOStreams Live Flows", charset="UTF-8"')])
         elif path == "/":
@@ -424,6 +487,9 @@ if __name__ == "__main__":
         sys.exit(problem)
     if DEMO:
         start_demo()
+    else:
+        load()
+    signal.signal(signal.SIGTERM, stop)
     print(f"AIOStreams Live Flows on {BIND}:{PORT}" + (" (demo data)" if DEMO else ""), flush=True)
     threading.Thread(target=poller, daemon=True).start()
     Server((BIND, PORT), Handler).serve_forever()

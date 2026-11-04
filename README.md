@@ -42,6 +42,8 @@
 | **Traffic** | Speed over the last 15 minutes and data served per day for 30 days |
 | **Addon health** | Requests, errors and response times from the last 24 hours |
 | **Server usage** | The host's CPU, memory and disk usage, with no agent to install |
+| **Phones and tablets** | A layout for small screens, and it can be installed as an app |
+| **Survives restarts** | The chart and recent events are saved to a Docker volume |
 | **History** | Recently finished streams and how they ended |
 | **Private by default** | Opens on the local machine only, loads nothing from outside, and has a server-side setting to hide viewers |
 
@@ -99,8 +101,18 @@ docker compose up -d
 Open <http://127.0.0.1:8300> on that machine. On a remote server, use an SSH tunnel:
 `ssh -L 8300:127.0.0.1:8300 you@server`.
 
-To update, run `docker compose pull && docker compose up -d`. To remove it, run `docker compose down`, then remove the
-`liveflows` user from AIOStreams.
+To update, run `docker compose pull && docker compose up -d`. To remove it, run `docker compose down -v` (`-v` also deletes the
+saved data), then remove the `liveflows` user from AIOStreams.
+
+### 📱 Use it as an app
+
+Phones only install a page as a proper app over **HTTPS**, so put it behind an HTTPS address that only you can reach first,
+such as a VPN or an access-controlled proxy. See [Keep it private](#keep-it-private).
+
+- **iPhone or iPad:** open it in Safari, then Share → **Add to Home Screen**.
+- **Android:** open it in Chrome, then menu → **Add to Home screen** or **Install app**.
+
+It shows live numbers only, so it has no offline mode.
 
 ---
 
@@ -114,7 +126,8 @@ To update, run `docker compose pull && docker compose up -d`. To remove it, run 
 | `FLOWS_PASSWORD` | Asks for a password on the page. Any username works |
 | `FLOWS_HIDE_VIEWERS` | `1` removes IPs, usernames, countries and filenames on the server, so no browser ever gets them |
 | `FLOWS_SOURCE_NAMES` | Nicer source names, such as `debrid=TorBox,addon.example.org=My addon`. The keys are `debrid`, `usenet`, `other` or a host name |
-| `FLOWS_DEMO` | `1` shows simulated data and never contacts AIOStreams |
+| `FLOWS_DEMO` | `1` shows simulated data, never contacts AIOStreams and saves nothing |
+| `FLOWS_DATA` | Folder for the saved data. Default `/data`. If it can't be written, Live Flows keeps running from memory and says so in the log |
 | `TZ` | Time zone for the logs. The page uses your browser's time |
 
 ---
@@ -144,8 +157,10 @@ The page shows your viewers' IP addresses and what they are watching, so treat i
 
 ### What it does and doesn't keep
 
-- Stream URLs never reach the browser, only the source label.
-- History and events stay in memory and are gone after a restart. It writes nothing to disk.
+- Stream URLs never reach the browser or the disk, only the source label.
+- The last 15 minutes of the chart and the last 40 events are saved in the `live-flows-data` volume, in a file only its owner can read. **That file holds viewer IPs
+  and filenames**, unless `FLOWS_HIDE_VIEWERS=1` is on. Turning that setting on also removes what was saved before.
+- Your AIOStreams login is never saved.
 - Country lookups use a copy of the DB-IP file inside the image, so viewer IPs aren't sent anywhere.
 - It has no telemetry and the page loads no outside fonts or scripts.
 - The container runs as an unprivileged user on a read-only filesystem.
@@ -167,7 +182,7 @@ The page shows your viewers' IP addresses and what they are watching, so treat i
 Tested on AIOStreams 2.37.0 behind its proxy, against one real server with debrid and addon streams, using read-only
 calls on 2 November 2026. The tests cover the login rules, what reaches the browser and the error messages.
 
-**Not tested yet:** the published image and `compose.yaml` on a real server; arm64; real Usenet streams; debrid services other
+**Not tested yet:** the published image, `compose.yaml` and its volume on a real server; installing the app and the layout on real phones and tablets; arm64; real Usenet streams; debrid services other
 than TorBox; other AIOStreams versions; login through OIDC.
 
 ---

@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -96,6 +97,10 @@ class Base(unittest.TestCase):
         FakeAio.seen, FakeAio.login_status, FakeAio.feed_status, FakeAio.feed_body, FakeAio.expire_next = [], 200, 200, None, False
         lf.AIO_URL, lf.AIO_USER, lf.AIO_PASSWORD = f"http://127.0.0.1:{self.aio.server_address[1]}", "watcher", "pw"
         lf.DEMO, lf.HIDE, lf.PAGE_PASSWORD, lf.SOURCE_NAMES = False, False, "", {}
+        self.data = tempfile.TemporaryDirectory()
+        self.addCleanup(self.data.cleanup)
+        lf.DATA_FILE = os.path.join(self.data.name, "state.json")
+        lf._save_failed["said"] = False
         lf.history.clear()
         lf.events.clear()
         lf.state.clear()
@@ -233,6 +238,97 @@ class Problems(Base):
             s.server_close()
 
 
+class SavedData(Base):
+    def restart(self):
+        """What a new process has: everything in memory gone, the file still there."""
+        lf.history.clear()
+        lf.events.clear()
+        lf._seen.update(viewers={}, feed_ok=None)
+        lf.load()
+
+    def fill(self):
+        now = int(time.time() * 1000)
+        lf.history.extend([[now - 2000000, 1], [now - 60000, 5], [now - 2000, 8]])
+        lf.event("good", "203.0.113.5 started Film.One.mkv")
+        lf._seen["viewers"] = {"k": {"key": "k", "ip": "203.0.113.5", "file": "Film.One.mkv", "requests": 1}}
+
+    def test_chart_events_and_viewers_come_back_with_a_gap(self):
+        self.fill()
+        lf.save()
+        self.assertFalse(os.path.exists(lf.DATA_FILE + ".tmp"))
+        self.restart()
+        points = list(lf.history)
+        self.assertEqual([p[1] for p in points], [5, 8, None])
+        self.assertEqual(lf.events[0]["text"], "203.0.113.5 started Film.One.mkv")
+        self.assertEqual(lf._seen["viewers"]["k"]["ip"], "203.0.113.5")
+
+    @unittest.skipIf(os.name == "nt", "Windows has no owner-only mode")
+    def test_file_is_owner_only(self):
+        lf.save()
+        self.assertEqual(os.stat(lf.DATA_FILE).st_mode & 0o777, 0o600)
+
+    def test_no_false_started_or_missing_finished_after_a_restart(self):
+        lf.poll()
+        lf.save()
+        self.restart()
+        lf._seen["viewers"]["gone"] = {"ip": "192.0.2.1", "file": "Gone.mkv"}
+        before = len(lf.events)
+        lf.poll()
+        new = [e["text"] for e in list(lf.events)[:len(lf.events) - before]]
+        self.assertEqual(new, ["192.0.2.1 finished Gone.mkv"])
+
+    def test_turning_hide_on_drops_what_was_saved_before(self):
+        self.fill()
+        lf.save()
+        lf.HIDE = True
+        self.restart()
+        lf.save()
+        lf.poll()
+        self.assertNotIn("203.0.113.5", json.dumps(list(lf.events)))
+        self.assertEqual(len(lf.history) > 0, True)
+        with open(lf.DATA_FILE) as f:
+            self.assertNotIn("203.0.113.5", f.read())
+
+    def test_hide_mode_never_writes_viewers_to_disk(self):
+        lf.HIDE = True
+        lf.poll()
+        lf.save()
+        with open(lf.DATA_FILE) as f:
+            text = f.read()
+        for private in ("203.0.113.5", "friend", "Film.One", "SECRET"):
+            self.assertNotIn(private, text)
+
+    def test_urls_never_reach_the_disk(self):
+        lf.poll()
+        lf.save()
+        with open(lf.DATA_FILE) as f:
+            text = f.read()
+        for secret in ("SECRET-TOKEN", "SECRET-KEY", "displayUrl", "aiostreams.session"):
+            self.assertNotIn(secret, text)
+
+    def test_damaged_files_start_clean(self):
+        for bad in ("{half a file", "[]", '{"history": 5, "events": [], "viewers": {}}', '{"history": [[1]], "events": 3, "viewers": 4}',
+                    '{"history": [], "events": [1], "viewers": {}}', ""):
+            with open(lf.DATA_FILE, "w") as f:
+                f.write(bad)
+            self.restart()
+            self.assertEqual(list(lf.events), [], bad)
+            self.assertEqual(lf._seen["viewers"], {}, bad)
+
+    def test_no_writable_folder_keeps_running_in_memory(self):
+        lf.DATA_FILE = os.path.join(self.data.name, "no-such-folder", "state.json")
+        lf.load()
+        lf.save()
+        lf.save()
+        lf.poll()
+        self.assertTrue(lf.state["viewers"]["ok"])
+
+    def test_demo_writes_nothing(self):
+        lf.DEMO = True
+        lf.save()
+        self.assertFalse(os.path.exists(lf.DATA_FILE))
+
+
 class Config(Base):
     def test_config_problem_names_what_is_missing(self):
         lf.AIO_PASSWORD = ""
@@ -305,6 +401,11 @@ class Page(Base):
         self.assertEqual(self.get("/flags/zz.svg")[0], 404)
         self.assertEqual(self.get("/flags/../live_flows.py")[0], 404)
         self.assertEqual(self.get("/live_flows.py")[0], 404)
+        self.assertEqual(self.get("/manifest.webmanifest")[0], 200)
+        self.assertEqual(json.loads(self.get("/manifest.webmanifest")[1])["short_name"], "Live Flows")
+        for icon in lf.ICONS:
+            self.assertEqual(self.get(icon)[0], 200, icon)
+        self.assertEqual(self.get("/icons/../live_flows.py")[0], 404)
 
     def test_password_covers_everything_except_health(self):
         lf.PAGE_PASSWORD = "open sesame"
@@ -313,12 +414,14 @@ class Page(Base):
             self.assertEqual(self.get(path, "wrong")[0], 401, path)
             self.assertEqual(self.get(path, "open sesame")[0], 200, path)
         self.assertEqual(self.get("/health")[0], 200)
+        self.assertEqual(self.get("/manifest.webmanifest")[0], 200)
+        self.assertEqual(self.get(lf.ICONS[0])[0], 200)
         self.assertIn("Basic", self.get("/")[2]["WWW-Authenticate"])
 
     def test_page_loads_nothing_from_outside(self):
         body = self.get("/")[1].decode()
         self.assertNotIn("googleapis", body)
-        self.assertNotIn("<link", body)
+        self.assertNotRegex(body, r"""<(link|script|img)[^>]+(href|src)=["'](https?:)?//""")
         self.assertIn("default-src 'self'", self.get("/")[2]["Content-Security-Policy"])
 
 

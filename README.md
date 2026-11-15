@@ -29,8 +29,8 @@
 ---
 
 <p align="center">
-  <img src="assets/screenshots/dashboard.png" alt="The dashboard, showing simulated viewers, speeds and addon health" width="900"/><br/>
-  <i>Demo mode. Every viewer, address and file here is simulated</i>
+  <img src="assets/screenshots/dashboard-live.webp" alt="The dashboard running in demo mode: speeds, viewers, the stream path and the charts update every 2 seconds" width="900"/><br/>
+  <i>Demo mode, recorded live. Every viewer, address and file here is simulated</i>
 </p>
 
 ## ✨ Features

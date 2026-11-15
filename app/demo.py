@@ -15,7 +15,7 @@ SESSIONS = [
     ("c", "clara", "192.0.2.140", "Tears.of.Steel.2012.1080p.WEB-DL.mkv", 6 * GB, "https://x/debrid/playback/x", "proxy", 1100, 0.7, 11),
     ("d", "dani", "2001:db8:51::8", "Night.of.the.Living.Dead.1968.1080p.BluRay.mkv", 12 * GB, "https://x/usenet/x", "usenet", 1800, 0.6, 18),
 ]
-ADDONS = [("comet", 1840, 3, 0.2, 620), ("mediafusion", 1612, 12, 0.7, 910), ("torbox-search", 1533, 0, 0.0, 340), ("newznab", 702, 58, 8.3, 2300)]
+ADDONS = [("comet", 1840, 3, 0.2, 620), ("mediafusion", 1612, 12, 0.7, 910), ("torbox-search", 1533, 0, 0.0, 340), ("newznab", 702, 21, 3.0, 2300)]
 ENDED = [
     ("Elephants.Dream.2006.1080p.BluRay.mkv", "203.0.113.90", "idle", 6, 41, 3.2),
     ("Cosmos.Laundromat.2015.1080p.WEB-DL.mkv", "198.51.100.77", "idle", 19, 12, 1.1),

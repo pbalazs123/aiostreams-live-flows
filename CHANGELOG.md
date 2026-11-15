@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 (15 November 2026)
+
+- Optional TorBox panel: set `TORBOX_API_KEY` to see TorBox's service status, your plan and torrent counts, with a status light on the debrid bubble
+- Failing addons now show in the status at the top and on the AIOStreams light, which turns amber for some errors
+- If AIOStreams isn't up yet when Live Flows starts, it tries again in 15 seconds instead of 5 minutes
+- "Path of a stream" is now called "Stream path"
+
 ## 0.2.0 (4 November 2026)
 
 - A layout for phones and tablets, with flow stripes on phones

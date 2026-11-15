@@ -73,6 +73,7 @@ h2 { margin: 0; font: 600 13px var(--sans); letter-spacing: .12em; text-transfor
 .led { position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--faint); }
 .led.on { background: var(--good); box-shadow: 0 0 6px var(--good); }
 .led.off { background: var(--crit); box-shadow: 0 0 6px var(--crit); }
+.led.warn { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
 .node strong { display: block; font-size: 14px; line-height: 1.25; overflow-wrap: anywhere; }
 .node span { display: block; color: var(--muted); font-size: 12px; line-height: 1.3; }
 .link { display: flex; flex-direction: column; align-items: center; padding: 0 5px; min-width: 0; }
@@ -111,6 +112,12 @@ th.num { font-family: var(--sans); }
 
 .lower { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); gap: 14px; }
 .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.tbx { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px 18px; align-items: start; }
+.tbx div span { display: block; color: var(--muted); font-size: 13px; }
+.tbx div b { display: block; font: 500 15px var(--mono); margin-top: 3px; overflow-wrap: anywhere; }
+.tbx div b.warn { color: var(--warn); } .tbx div b.crit { color: var(--crit); }
+.tbx .wide { grid-column: span 2; }
+.tbnote { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
 #chart, #daily { position: relative; }
 #chart svg, #daily svg { display: block; width: 100%; touch-action: pan-y; }
 #chart text, #daily text { font: 12px var(--sans); fill: var(--faint); }
@@ -226,7 +233,7 @@ th.num { font-family: var(--sans); }
   <section class="server" id="server" aria-label="Server usage" hidden></section>
 
   <section class="p" aria-label="Path of a stream">
-    <div class="ph"><h2>Path of a stream</h2></div>
+    <div class="ph"><h2>Stream path</h2></div>
     <div class="paths" id="paths"></div>
     <div class="empty" id="nopaths" hidden>No streams since this page was opened.</div>
   </section>
@@ -238,6 +245,12 @@ th.num { font-family: var(--sans); }
       <tbody id="viewers"></tbody>
     </table></div>
     <div class="empty" id="noview" hidden></div>
+  </section>
+
+  <section class="p" id="torbox" aria-label="TorBox" hidden>
+    <div class="ph"><h2>TorBox</h2><span id="tbChecked"></span></div>
+    <div class="tbx" id="tbx"></div>
+    <p class="tbnote" id="tbNote" hidden></p>
   </section>
 
   <div class="lower">
@@ -307,15 +320,68 @@ const ACT = {
   idle: ["warn", "▲", "Idle"],
 };
 
-function renderPaths(list, known) {
+// The addons AIOStreams calls, with the Addon health table's limits: 20 % errors or more = failing, 5 % = some errors.
+function addonHealth(addons) {
+  const failing = addons.filter(a => (a.error_rate || 0) >= 20), errors = addons.filter(a => (a.error_rate || 0) >= 5 && (a.error_rate || 0) < 20);
+  const names = l => l.map(a => `${a.name || "Unknown"} (${a.error_rate}%)`).join(", ");
+  return { failing, errors, text: !addons.length ? "no addon figures yet" : failing.length ? "failing in the last 24 hours: " + names(failing)
+    : errors.length ? "some errors in the last 24 hours: " + names(errors) : "its addons are healthy" };
+}
+
+// TorBox, only when the server has a TorBox API key. Red: its key is refused, its API can't be reached, a watched part of
+// its status page is down, or the plan has ended. Amber: maintenance or degraded on the status page, or the plan ends within 7 days.
+const tbDay = t => new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+function torboxHealth(t) {
+  if (!t) return null;
+  const issues = (t.status && t.status.issues) || [], report = t.status && (t.status.reports || [])[0];
+  const exp = t.account && t.account.expires ? new Date(t.account.expires) : null, days = exp && !isNaN(exp) ? (exp - Date.now()) / 864e5 : null;
+  const parts = issues.map(i => i.name + " " + i.status).join(", ");
+  const until = report && report.ends ? " until " + tbDay(report.ends) : "";
+  let state = true, title = "", sub = "";
+  if (t.error) { state = false; title = t.error.startsWith("TorBox refused") ? "TorBox refused the API key" : "Can't reach TorBox"; sub = t.error; }
+  else if (issues.some(i => i.status === "downtime")) { state = false; title = "TorBox is down"; sub = parts.charAt(0).toUpperCase() + parts.slice(1) + until; }
+  else if (days !== null && days < 0 && !t.account.renews) { state = false; title = "TorBox plan has ended"; sub = "Streams from TorBox stop working without a plan"; }
+  else if (issues.length) { state = "warn"; title = issues.every(i => i.status === "maintenance") ? "TorBox maintenance" : "TorBox is degraded"; sub = parts.charAt(0).toUpperCase() + parts.slice(1) + until; }
+  else if (days !== null && days < 7 && !t.account.renews) { state = "warn"; title = "TorBox plan ends soon"; sub = "It ends " + tbDay(exp); }
+  const pageText = !t.status ? "status page not read" : issues.length ? "status page: " + parts + (report ? ` ("${report.title}"${until})` : "") : "status page shows no problems";
+  const detail = (t.error ? t.error + "; " : "") + pageText;
+  return { state, title, sub, detail, days, exp, report, issues };
+}
+
+function renderTorbox(t, tb) {
+  $("torbox").hidden = !t;
+  if (!t) return;
+  const n = t.torrents, cell = (label, value, cls, wide) => `<div${wide ? ' class="wide"' : ""}><span>${label}</span><b${cls ? ` class="${cls}"` : ""}>${esc(value)}</b></div>`;
+  const svc = !t.status ? ["", "Unknown"] : tb.issues.some(i => i.status === "downtime") ? ["crit", "Down"] : tb.issues.length ? ["warn", tb.issues.every(i => i.status === "maintenance") ? "Maintenance" : "Degraded"] : ["", "Operational"];
+  const ends = tb.exp && !isNaN(tb.exp) ? tbDay(tb.exp) + (tb.days >= 0 ? ` (${Math.floor(tb.days)} days)` : "") : "–";
+  $("tbx").innerHTML =
+    cell("Service", svc[1], svc[0]) +
+    cell("API key", t.error ? (t.error.startsWith("TorBox refused") ? "Refused" : "No answer") : "Works", t.error ? "crit" : "") +
+    cell("Plan", t.account ? t.account.plan || "Unknown" : "–") +
+    cell(t.account && t.account.renews ? "Plan renews" : "Plan ends", ends, t.account && t.account.renews ? "" : tb.days !== null && tb.days < 0 ? "crit" : tb.days !== null && tb.days < 7 ? "warn" : "") +
+    cell("Torrents", n ? n.total : "–") +
+    cell("Downloading", n ? n.downloading : "–") +
+    cell("Inactive", n ? n.inactive : "–", n && n.inactive ? "warn" : "") +
+    cell("Failed", n ? n.failed : "–", n && n.failed ? "crit" : "");
+  $("tbChecked").textContent = t.checked ? "Checked at " + hms(new Date(t.checked)) + ", every minute" : "";
+  const note = tb.issues.length ? tb.issues.map(i => i.name + ": " + i.status).join(", ") + (tb.report ? ` · "${tb.report.title}"` + (tb.report.ends ? " until " + tbDay(tb.report.ends) : "") : "") : "";
+  $("tbNote").hidden = !note; $("tbNote").textContent = note;
+}
+
+function renderPaths(list, known, health, tb) {
   list.forEach(v => seenSources.add(v.source));
   const names = [...seenSources].sort();
-  const light = known ? ["on", "AIOStreams OK: its feed answers"] : ["off", "AIOStreams not working: its feed doesn't answer"];
+  const light = !known ? ["off", "AIOStreams not working: its feed doesn't answer"]
+    : health.failing.length ? ["off", "AIOStreams addons failing: its feed answers; " + health.text]
+    : health.errors.length ? ["warn", "AIOStreams addons have some errors: its feed answers; " + health.text]
+    : ["on", "AIOStreams OK: its feed answers; " + health.text];
   $("nopaths").hidden = names.length > 0;
   $("paths").innerHTML = names.map(name => {
     const here = list.filter(v => v.source === name), rate = known ? here.reduce((a, v) => a + mbit(v.bps), 0) : null;
     const quiet = rate === null || Math.round(rate) === 0 ? " quiet" : "";
-    return `<div class="flow"><div class="node"><strong>${esc(name)}</strong></div>` +
+    const tbLight = tb && name === tb.label ? (tb.state === false ? "off" : tb.state === "warn" ? "warn" : "on") : null;
+    const tbTitle = tbLight ? esc(`TorBox ${tbLight === "on" ? "OK" : tbLight === "warn" ? "has a notice" : "not working"}: ${tb.detail}`) : "";
+    return `<div class="flow"><div class="node">${tbLight ? `<i class="led ${tbLight}" role="img" title="${tbTitle}" aria-label="${tbTitle}"></i>` : ""}<strong>${esc(name)}</strong></div>` +
       `<div class="link"><b>${n0(rate)}</b><div class="pipe${quiet}"><svg height="6"><line x1="0" y1="3" x2="100%" y2="3"/></svg></div><span>Mbit/s</span></div>` +
       `<div class="node"><i class="led ${light[0]}" role="img" title="${light[1]}" aria-label="${light[1]}"></i><strong>AIOStreams</strong></div>` +
       `<div class="link"><b>${n0(rate)}</b><div class="pipe out${quiet}"><svg height="6"><line x1="0" y1="3" x2="100%" y2="3"/></svg></div><span>Mbit/s</span></div>` +
@@ -351,9 +417,16 @@ function render() {
 
   const feed = s.viewers || {}, list = feed.streams || [], stats = s.stats || {};
   const waiting = list.filter(v => v.activity !== "streaming").length;
+  const health = addonHealth(stats.addons || []);
+  const tb = torboxHealth(s.torbox);
+  if (tb) tb.label = s.torbox.label;
   let cls = "", sym = "✓", title = "Everything is running", sub = list.length ? "AIOStreams answers and streams are playing" : "Nobody is watching right now";
   if (failed >= 3) { cls = "crit"; sym = "✕"; title = "This page can't reach its server"; sub = "These numbers are out of date"; }
   else if (!feed.ok) { cls = "crit"; sym = "✕"; title = "Can't read AIOStreams"; sub = feed.error || "Unknown error"; }
+  else if (health.failing.length) { cls = "crit"; sym = "✕"; title = health.failing.length > 1 ? health.failing.length + " addons failing" : "Addon failing: " + (health.failing[0].name || "Unknown"); sub = health.text.charAt(0).toUpperCase() + health.text.slice(1); }
+  else if (tb && tb.state === false) { cls = "crit"; sym = "✕"; title = tb.title; sub = tb.sub; }
+  else if (health.errors.length) { cls = "warn"; sym = "▲"; title = health.errors.length > 1 ? health.errors.length + " addons have errors" : "Addon errors: " + (health.errors[0].name || "Unknown"); sub = health.text.charAt(0).toUpperCase() + health.text.slice(1); }
+  else if (tb && tb.state === "warn") { cls = "warn"; sym = "▲"; title = tb.title; sub = tb.sub; }
   $("verdict").className = "cell verdict " + cls;
   $("vsym").textContent = sym; $("vtext").textContent = title; $("vsub").textContent = sub;
 
@@ -361,7 +434,8 @@ function render() {
   $("sOut").textContent = n0(s.to_viewers);
   $("sWaiting").textContent = feed.ok ? waiting : "–";
   $("sMonth").textContent = stats.bandwidth ? Math.round((stats.bandwidth.total || 0) / 2 ** 30) : "–";
-  renderPaths(list, !!feed.ok);
+  renderPaths(list, !!feed.ok, health, tb);
+  renderTorbox(s.torbox, tb);
   renderServer(stats.system);
 
   $("viewers").innerHTML = list.map((v, i) => {

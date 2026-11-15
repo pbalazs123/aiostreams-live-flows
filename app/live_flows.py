@@ -4,6 +4,9 @@
 AIOStreams has no read-only role, so the login this uses could also stop streams or ban users. The only POST this program
 ever sends is the login itself: everything else goes through aio_get, which refuses any path outside READS.
 
+TorBox (optional, TORBOX_API_KEY): a separate thread reads TorBox's public status page and, with the key, only GETs the
+account and the torrent list (TORBOX_READS) once a minute. The key stays on the server; no torrent names reach the page.
+
 History and events are saved to FLOWS_DATA every 30 s and on shutdown. Stream URLs never reach the browser or the disk, only a source label.
 """
 import base64
@@ -31,6 +34,7 @@ POINTS = 450
 SAVE_EVERY = 30
 ICONS = ("/icons/icon-180.png", "/icons/icon-192.png", "/icons/icon-512.png")
 LOGIN_RETRY = 300
+LOGIN_RETRY_UNREACHABLE = 15   # AIOStreams not listening yet, e.g. both just started
 READS = (
     "/dashboard/streams/live",
     "/dashboard/streams/history?limit=8",
@@ -59,6 +63,14 @@ SOURCE_NAMES = parse_names(os.environ.get("FLOWS_SOURCE_NAMES", ""))
 BIND = os.environ.get("FLOWS_BIND", "0.0.0.0")
 PORT = int(os.environ.get("FLOWS_PORT", "8300"))
 DATA_FILE = os.path.join(os.environ.get("FLOWS_DATA", "/data"), "state.json")
+TORBOX_KEY = os.environ.get("TORBOX_API_KEY", "").strip()
+# Parts of TorBox's status page that streaming from TorBox depends on.
+TORBOX_PARTS = [p.strip() for p in os.environ.get("TORBOX_STATUS_PARTS", "API,Database,Public torrents,Private torrents").split(",") if p.strip()]
+TORBOX_API = "https://api.torbox.app/v1/api"
+TORBOX_STATUS = "https://status.torbox.app/index.json"
+TORBOX_READS = ("/user/me", "/torrents/mylist")
+TORBOX_EVERY = 60
+TORBOX_PLANS = {0: "Free", 1: "Essential", 2: "Pro", 3: "Standard"}
 
 history = collections.deque(maxlen=POINTS)
 events = collections.deque(maxlen=40)
@@ -163,7 +175,12 @@ def aio_login():
     if time.monotonic() < _aio["retry"]:
         return False
     _aio["retry"] = time.monotonic() + LOGIN_RETRY
-    status, _body, headers = aio_call("/auth/login", {"username": AIO_USER, "password": AIO_PASSWORD})
+    try:
+        status, _body, headers = aio_call("/auth/login", {"username": AIO_USER, "password": AIO_PASSWORD})
+    except OSError:
+        # No answer is not a refused password: try again soon, it can't trip the rate limit.
+        _aio.update(retry=time.monotonic() + LOGIN_RETRY_UNREACHABLE, error="Can't reach AIOStreams at AIOSTREAMS_URL")
+        return False
     for c in headers.get_all("Set-Cookie") or []:
         if status == 200 and c.startswith("aiostreams.session="):
             _aio.update(cookie=c.split(";", 1)[0], error=None, retry=0)
@@ -174,6 +191,106 @@ def aio_login():
         429: "AIOStreams is rate limiting logins",
     }.get(status, f"AIOStreams login failed with status {status}")
     return False
+
+
+class TorBoxRefused(Exception):
+    pass
+
+
+def torbox_get(path):
+    """GET one TorBox API path with the key. The only way this program uses the key: it never sends anything else to TorBox."""
+    if path not in TORBOX_READS:
+        raise ValueError("not an allowed TorBox read")
+    req = urllib.request.Request(TORBOX_API + path, headers={"Authorization": "Bearer " + TORBOX_KEY, "Accept": "application/json",
+                                                             "User-Agent": "aiostreams-live-flows"})
+    try:
+        with _opener.open(req, timeout=10) as r:
+            body = json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise TorBoxRefused() from None
+        raise ValueError(f"status {e.code}") from None
+    if not isinstance(body, dict) or not body.get("success", True):
+        raise ValueError("TorBox said no")
+    return body.get("data")
+
+
+def torbox_status_page():
+    """TorBox's public status page (no key): the watched parts that aren't operational, and open notices about them."""
+    req = urllib.request.Request(TORBOX_STATUS, headers={"Accept": "application/json", "User-Agent": "aiostreams-live-flows"})
+    with _opener.open(req, timeout=10) as r:
+        included = json.load(r).get("included") or []
+    parts = {i.get("id"): (i.get("attributes") or {}).get("public_name") for i in included if i.get("type") == "status_page_resource"}
+    issues = [{"name": a.get("public_name"), "status": a.get("status")} for a in
+              ((i.get("attributes") or {}) for i in included if i.get("type") == "status_page_resource")
+              if a.get("public_name") in TORBOX_PARTS and a.get("status") != "operational"]
+    reports = []
+    for i in included:
+        a = i.get("attributes") or {}
+        if i.get("type") != "status_report" or a.get("aggregate_state") in (None, "resolved", "operational"):
+            continue
+        if any(parts.get(str(x.get("status_page_resource_id"))) in TORBOX_PARTS for x in a.get("affected_resources") or []):
+            reports.append({"title": str(a.get("title") or "")[:120], "ends": a.get("ends_at")})
+    return {"issues": issues, "reports": reports[:3]}
+
+
+def torrent_counts(torrents):
+    """Counts only: no names or hashes leave the server."""
+    out = {"total": 0, "downloading": 0, "ready": 0, "inactive": 0, "failed": 0}
+    for t in torrents if isinstance(torrents, list) else []:
+        if not isinstance(t, dict):
+            continue
+        st = str(t.get("download_state") or "").lower()
+        out["total"] += 1
+        if "error" in st or "failed" in st:
+            out["failed"] += 1
+        elif st == "expired" or "stalled" in st or "missing" in st:
+            out["inactive"] += 1
+        elif not t.get("download_finished"):
+            out["downloading"] += 1
+        else:
+            out["ready"] += 1
+    return out
+
+
+def torbox_read():
+    out = {"label": SOURCE_NAMES.get("debrid", "Debrid"), "checked": int(time.time() * 1000), "status": None,
+           "account": None, "torrents": None, "error": None}
+    try:
+        out["status"] = demo.torbox_status() if demo else torbox_status_page()
+    except (OSError, ValueError, AttributeError, TypeError):
+        pass
+    try:
+        me = (demo.torbox("/user/me") if demo else torbox_get("/user/me")) or {}
+        out["account"] = {"plan": TORBOX_PLANS.get(me.get("plan")), "expires": me.get("premium_expires_at"), "renews": me.get("is_subscribed") is True}
+        out["torrents"] = torrent_counts(demo.torbox("/torrents/mylist") if demo else torbox_get("/torrents/mylist"))
+    except TorBoxRefused:
+        out["error"] = "TorBox refused the API key. Check TORBOX_API_KEY"
+    except (OSError, ValueError, AttributeError, TypeError):
+        out["error"] = "Can't reach TorBox's API"
+    return out
+
+
+def torbox_problem(t):
+    if not t:
+        return None
+    if t["error"]:
+        return t["error"]
+    issues = (t["status"] or {}).get("issues") or []
+    return "TorBox: " + ", ".join(f"{i['name']} {i['status']}" for i in issues) if issues else None
+
+
+def torbox_loop():
+    while True:
+        value = torbox_read()
+        with lock:
+            before = torbox_problem(state.get("torbox")) if state.get("torbox") else ""
+        now = torbox_problem(value)
+        if before != "" and now != before:
+            event("warn" if now else "good", now or "TorBox is back to normal")
+        with lock:
+            state["torbox"] = value
+        time.sleep(TORBOX_EVERY)
 
 
 def unsupported():
@@ -492,4 +609,6 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, stop)
     print(f"AIOStreams Live Flows on {BIND}:{PORT}" + (" (demo data)" if DEMO else ""), flush=True)
     threading.Thread(target=poller, daemon=True).start()
+    if TORBOX_KEY or DEMO:
+        threading.Thread(target=torbox_loop, daemon=True).start()
     Server((BIND, PORT), Handler).serve_forever()

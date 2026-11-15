@@ -13,6 +13,7 @@ services:
       FLOWS_PASSWORD: ${FLOWS_PASSWORD:-}
       FLOWS_HIDE_VIEWERS: ${FLOWS_HIDE_VIEWERS:-}
       FLOWS_SOURCE_NAMES: ${FLOWS_SOURCE_NAMES:-}
+      TORBOX_API_KEY: ${TORBOX_API_KEY:-}
       TZ: ${TZ:-UTC}
     ports:
       # Only this machine can open the page. Read "Keep it private" in the README before changing this.

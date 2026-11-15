@@ -209,6 +209,11 @@ class Problems(Base):
         lf.AIO_URL = "http://127.0.0.1:9"
         self.assertIn("Can't reach AIOStreams", self.error())
 
+    def test_unreachable_login_retries_soon(self):
+        lf.AIO_URL = "http://127.0.0.1:9"
+        self.error()
+        self.assertLessEqual(lf._aio["retry"] - time.monotonic(), lf.LOGIN_RETRY_UNREACHABLE)
+
     def test_redirect_is_not_followed(self):
         class Redirect(FakeAio):
             def do_POST(self):
@@ -423,6 +428,114 @@ class Page(Base):
         self.assertNotIn("googleapis", body)
         self.assertNotRegex(body, r"""<(link|script|img)[^>]+(href|src)=["'](https?:)?//""")
         self.assertIn("default-src 'self'", self.get("/")[2]["Content-Security-Policy"])
+
+
+STATUS_PAGE = {"data": {}, "included": [
+    {"id": "1", "type": "status_page_resource", "attributes": {"public_name": "API", "status": "operational"}},
+    {"id": "2", "type": "status_page_resource", "attributes": {"public_name": "Private torrents", "status": "maintenance"}},
+    {"id": "3", "type": "status_page_resource", "attributes": {"public_name": "Usenet Service", "status": "downtime"}},
+    {"id": "9", "type": "status_report", "attributes": {"title": "Private torrent maintenance.", "aggregate_state": "maintenance",
+                                                       "ends_at": "2026-11-16T12:15:00.000Z", "affected_resources": [{"status_page_resource_id": "2"}]}},
+    {"id": "8", "type": "status_report", "attributes": {"title": "Old", "aggregate_state": "resolved", "affected_resources": [{"status_page_resource_id": "1"}]}},
+]}
+TORRENTS = [{"name": "SECRET-NAME", "hash": "SECRET-HASH", "download_state": s, "download_finished": f}
+            for s, f in [("cached", True), ("uploading", True), ("downloading", False), ("expired", True), ("stalled (no seeds)", False), ("error", False), ("reported missing", True)]]
+
+
+class FakeTorBox(http.server.BaseHTTPRequestHandler):
+    seen = []
+    status = 200
+
+    def do_GET(self):
+        cls = type(self)
+        cls.seen.append(("GET", self.path, self.headers.get("Authorization")))
+        if self.path == "/status/index.json":
+            payload, code = STATUS_PAGE, 200
+        elif self.headers.get("Authorization") != "Bearer TB-SECRET-KEY" or cls.status != 200:
+            payload, code = {"success": False, "detail": "bad token"}, cls.status if cls.status != 200 else 403
+        else:
+            payload, code = {"success": True, "data": {"/api/user/me": {"plan": 2, "email": "SECRET-EMAIL", "is_subscribed": False, "premium_expires_at": "2027-01-01T00:00:00Z"},
+                                                       "/api/torrents/mylist": TORRENTS}[self.path]}, 200
+        body = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        type(self).seen.append(("POST", self.path, None))
+        self.send_response(405)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+class TorBox(Base):
+    def setUp(self):
+        super().setUp()
+        self.tb = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeTorBox)
+        threading.Thread(target=self.tb.serve_forever, daemon=True).start()
+        self.addCleanup(self.tb.server_close)
+        self.addCleanup(self.tb.shutdown)
+        base = f"http://127.0.0.1:{self.tb.server_address[1]}"
+        FakeTorBox.seen, FakeTorBox.status = [], 200
+        self.old = lf.TORBOX_API, lf.TORBOX_STATUS, lf.TORBOX_KEY
+        lf.TORBOX_API, lf.TORBOX_STATUS, lf.TORBOX_KEY = base + "/api", base + "/status/index.json", "TB-SECRET-KEY"
+        self.addCleanup(self.restore)
+
+    def restore(self):
+        lf.TORBOX_API, lf.TORBOX_STATUS, lf.TORBOX_KEY = self.old
+
+    def test_account_counts_and_status_page(self):
+        t = lf.torbox_read()
+        self.assertIsNone(t["error"])
+        self.assertEqual(t["account"], {"plan": "Pro", "expires": "2027-01-01T00:00:00Z", "renews": False})
+        self.assertEqual(t["torrents"], {"total": 7, "downloading": 1, "ready": 2, "inactive": 3, "failed": 1})
+        # Usenet isn't watched by default; the resolved report is left out.
+        self.assertEqual(t["status"]["issues"], [{"name": "Private torrents", "status": "maintenance"}])
+        self.assertEqual([r["title"] for r in t["status"]["reports"]], ["Private torrent maintenance."])
+
+    def test_key_names_and_email_never_reach_the_page(self):
+        lf.state["torbox"] = lf.torbox_read()
+        lf.poll()
+        page = json.dumps(lf.state)
+        for secret in ("TB-SECRET-KEY", "SECRET-NAME", "SECRET-HASH", "SECRET-EMAIL"):
+            self.assertNotIn(secret, page)
+
+    def test_only_gets_on_the_allowed_list(self):
+        lf.torbox_read()
+        self.assertTrue(all(m == "GET" for m, _p, _a in FakeTorBox.seen))
+        self.assertEqual(sorted(p for _m, p, _a in FakeTorBox.seen), ["/api/torrents/mylist", "/api/user/me", "/status/index.json"])
+        # The status page never gets the key.
+        self.assertEqual([a for _m, p, a in FakeTorBox.seen if p.startswith("/status")], [None])
+        with self.assertRaises(ValueError):
+            lf.torbox_get("/torrents/controltorrent")
+
+    def test_refused_key(self):
+        FakeTorBox.status = 401
+        t = lf.torbox_read()
+        self.assertIn("refused the API key", t["error"])
+        self.assertIsNotNone(t["status"])
+
+    def test_unreachable(self):
+        lf.TORBOX_API = lf.TORBOX_STATUS = "http://127.0.0.1:9"
+        t = lf.torbox_read()
+        self.assertIn("Can't reach TorBox", t["error"])
+        self.assertIsNone(t["status"])
+
+    def test_without_a_key_the_page_gets_nothing(self):
+        lf.poll()
+        self.assertNotIn("torbox", lf.state)
+
+    def test_demo_stays_off_the_network(self):
+        lf.start_demo()
+        try:
+            t = lf.torbox_read()
+        finally:
+            lf.demo = None
+        self.assertEqual(t["account"]["plan"], "Pro")
+        self.assertEqual(FakeTorBox.seen, [])
 
 
 if __name__ == "__main__":

@@ -76,3 +76,17 @@ def read(path):
         return {"cpu": {"cores": 4, "total": int(18 + 7 * math.sin(now / 23)), "loadavg": [round(0.7 + 0.3 * math.sin(now / 41), 2)]},
                 "memory": {"total": 8 * GB, "used": int(3.4 * GB)}, "disk": {"total": 80 * GB, "used": 31 * GB}}
     raise ValueError(path)
+
+
+# TorBox, when the demo shows it: a plan, a few torrents and no problems on the status page.
+def torbox(path):
+    if path == "/user/me":
+        return {"plan": 2, "is_subscribed": True, "premium_expires_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 41 * 86400))}
+    if path == "/torrents/mylist":
+        return ([{"download_state": "cached", "download_finished": True}] * 23 + [{"download_state": "downloading", "download_finished": False}] * 2
+                + [{"download_state": "expired", "download_finished": True}])
+    raise ValueError(path)
+
+
+def torbox_status():
+    return {"issues": [], "reports": []}

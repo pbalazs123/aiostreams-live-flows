@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>See who is streaming through your AIOStreams, right now</b><br/>
-  One small container. It updates every 2 seconds and needs nothing besides AIOStreams.
+  One small container. It updates every 2 seconds and needs nothing besides AIOStreams. TorBox can be added.
 </p>
 
 <p align="center">
@@ -40,7 +40,8 @@
 | **Who is watching** | IP address, country flag, username, file, position, speed and state of every stream |
 | **Where it comes from** | Streams grouped by source: debrid, Usenet or the addon's host name |
 | **Traffic** | Speed over the last 15 minutes and data served per day for 30 days |
-| **Addon health** | Requests, errors and response times from the last 24 hours |
+| **Addon health** | Requests, errors and response times from the last 24 hours. Failing addons show in the status at the top |
+| **TorBox (optional)** | With your TorBox API key: TorBox's service status, your plan and when it ends, and torrent counts, with a status light on the debrid bubble |
 | **Server usage** | The host's CPU, memory and disk usage, with no agent to install |
 | **Phones and tablets** | A layout for small screens, and it can be installed as an app |
 | **Survives restarts** | The chart and recent events are saved to a Docker volume |
@@ -125,6 +126,8 @@ It shows live numbers only, so it has no offline mode.
 | `AIOSTREAMS_USER`, `AIOSTREAMS_PASSWORD` | The admin login. Required |
 | `FLOWS_PASSWORD` | Asks for a password on the page. Any username works |
 | `FLOWS_HIDE_VIEWERS` | `1` removes IPs, usernames, countries and filenames on the server, so no browser ever gets them |
+| `TORBOX_API_KEY` | Optional. Your TorBox API key turns on the TorBox panel. Read [TorBox](#torbox) first |
+| `TORBOX_STATUS_PARTS` | Which parts of [TorBox's status page](https://status.torbox.app) count. Default `API,Database,Public torrents,Private torrents` |
 | `FLOWS_SOURCE_NAMES` | Nicer source names, such as `debrid=TorBox,addon.example.org=My addon`. The keys are `debrid`, `usenet`, `other` or a host name |
 | `FLOWS_DEMO` | `1` shows simulated data, never contacts AIOStreams and saves nothing |
 | `FLOWS_DATA` | Folder for the saved data. Default `/data`. If it can't be written, Live Flows keeps running from memory and says so in the log |
@@ -145,6 +148,18 @@ this, but you are still trusting this program with an admin login.
   every user in `AIOSTREAMS_AUTH` an admin. That includes logins you only hand out for proxying, once password login is on.
   Limit them with, for example, `AIOSTREAMS_AUTH_PERMISSIONS=you=admin,liveflows=admin,friends=proxy`.
 
+### TorBox
+
+Optional, and off unless `TORBOX_API_KEY` is set. Once a minute Live Flows reads TorBox's public status page, which needs no key, and
+with the key it only reads your account and your torrent list. The code refuses any other TorBox call, and the tests check this.
+
+- **The key is a full key.** TorBox has no read-only keys, so it could also add or delete torrents. It stays on the server and is never saved.
+- **Only counts reach the page:** your plan, when it ends or renews, and how many torrents are downloading, inactive or failed.
+  No torrent names, hashes or your email.
+- **The light goes on the debrid bubble.** AIOStreams doesn't say which debrid service a stream uses, so set
+  `FLOWS_SOURCE_NAMES=debrid=TorBox` if TorBox is your only one.
+- It is the only thing that makes Live Flows contact anything besides AIOStreams: `api.torbox.app` and `status.torbox.app`.
+
 ### Keep it private
 
 The page shows your viewers' IP addresses and what they are watching, so treat it as personal data.
@@ -162,6 +177,7 @@ The page shows your viewers' IP addresses and what they are watching, so treat i
   and filenames**, unless `FLOWS_HIDE_VIEWERS=1` is on. Turning that setting on also removes what was saved before.
 - Your AIOStreams login is never saved.
 - Country lookups use a copy of the DB-IP file inside the image, so viewer IPs aren't sent anywhere.
+- Your TorBox key is never saved or sent to the browser.
 - It has no telemetry and the page loads no outside fonts or scripts.
 - The container runs as an unprivileged user on a read-only filesystem.
 
@@ -182,6 +198,8 @@ The page shows your viewers' IP addresses and what they are watching, so treat i
 Tested on AIOStreams 2.37.0 behind its proxy, against one real server with debrid and addon streams, using read-only
 calls on 2 November 2026. The tests cover the login rules, what reaches the browser and the error messages.
 
+The TorBox panel was checked against one real TorBox account's answers on 15 November 2026.
+
 **Not tested yet:** the published image, `compose.yaml` and its volume on a real server; installing the app and the layout on real phones and tablets; arm64; real Usenet streams; debrid services other
 than TorBox; other AIOStreams versions; login through OIDC.
 
@@ -196,7 +214,10 @@ user. Live Flows waits 5 minutes between attempts so it can't trip the login lim
 
 **"This AIOStreams user is not an admin"?** Add `liveflows=admin` to `AIOSTREAMS_AUTH_PERMISSIONS` and recreate AIOStreams.
 
-**"Can't reach AIOStreams"?** Check `AIOSTREAMS_NETWORK` and the container name in `AIOSTREAMS_URL`.
+**"Can't reach AIOStreams"?** Check `AIOSTREAMS_NETWORK` and the container name in `AIOSTREAMS_URL`. Right after both start,
+this can show for a few seconds: Live Flows tries again every 15 seconds until AIOStreams answers.
+
+**"TorBox refused the API key"?** Copy the key again from TorBox's settings into `TORBOX_API_KEY`, then restart Live Flows.
 
 **"answered in an unexpected way"?** AIOStreams probably changed its API. Please
 [open an issue](https://github.com/pbalazs123/aiostreams-live-flows/issues) with the version shown in the message.
